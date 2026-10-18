@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <!--
   idea_14_v3.html - Vet medicine / vaccine cabinet dashboard (dark theme + light toggle)
-  Open as: idea_14_v3.html?team=team04   (change 04 to your team number)
+  Open as: idea_14_v3.html?team=team05   (change 05 to your team number)
   Listens to bento-aiot/<team>/# and sends commands to bento-aiot/<team>/cmd
   Works with idea_14_vet_fridge_v2.py.
     event      (only when something changes): level alert temp_c rh sun_c crop out_s exc_n vib_n vib_g quarantine
-    telemetry  (every 5 s): n crop temp_c rh sun_c level out_s exc_n vib_n vib quarantine t_lo t_hi
+    telemetry  (every 5 s): n crop temp_c rh sun_c level out_s exc_n vib_n vib quarantine t_lo t_hi h_lo h_hi
   What the page does
     - Board light: green while messages arrive, red and a banner after 15 s of silence
     - Live readings and the last 8 values from telemetry; the chart line is drawn from telemetry too
     - Demo button: simulated data without a board (5 / 10 / 30 minutes become 20 / 40 / 70 seconds)
-    - Commands: ack, set t_lo / t_hi, beep, say (text on the RGB matrix). At least 1 s between commands.
+    - Commands: ack, set t_lo / t_hi / h_lo / h_hi (humidity %), beep, say (text on the RGB matrix). At least 1 s between commands.
     - Alarm sound / notification need one click on "enable alarm" (browser rule)
     - Quarantine banner stays until a person clicks "vet checked" (it never clears by itself)
   The public broker has no password: anyone can read and send. Never send secrets.
@@ -27,7 +27,7 @@
     --bg: #0b1220; --glow: rgba(34, 211, 238, .10);
     --card: #141e33; --card2: #101a2e; --line: #2a3955;
     --ink: #e8eef7; --dim: #8fa1bd; --accent: #22d3ee; --on-accent: #06222b;
-    --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+    --ok: #34d399; --warn: #fbbf24; --bad: #f87171; --hum: #c084fc;
     --ok-bg: rgba(52, 211, 153, .14); --warn-bg: rgba(251, 191, 36, .14); --bad-bg: rgba(248, 113, 113, .16);
     --shadow: 0 8px 28px rgba(0, 0, 0, .35);
     --font: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", "Sarabun", sans-serif;
@@ -37,7 +37,7 @@
     --bg: #eef4f7; --glow: rgba(14, 116, 144, .08);
     --card: #ffffff; --card2: #f4f8fb; --line: #cbd9e2;
     --ink: #0f2230; --dim: #566b7c; --accent: #0e7490; --on-accent: #ffffff;
-    --ok: #059669; --warn: #b45309; --bad: #dc2626;
+    --ok: #059669; --warn: #b45309; --bad: #dc2626; --hum: #7c3aed;
     --ok-bg: rgba(5, 150, 105, .12); --warn-bg: rgba(180, 83, 9, .12); --bad-bg: rgba(220, 38, 38, .10);
     --shadow: 0 6px 20px rgba(15, 34, 48, .08);
   }
@@ -128,6 +128,8 @@
   .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; }
   .kpi b { display: block; font-size: 28px; line-height: 1.2; font-variant-numeric: tabular-nums; }
   .kpi span { color: var(--dim); font-size: 13px; }
+  .kpi.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .kpi.bad b { color: var(--bad); }
 
   /* chart */
   .chartwrap { position: relative; }
@@ -137,6 +139,8 @@
   .ok-band { fill: var(--ok-bg); }
   .ok-edge { stroke: var(--ok); stroke-width: 1; stroke-dasharray: 4 4; opacity: .8; }
   .trace { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+  .trace-h { fill: none; stroke: var(--hum); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; opacity: .95; }
+  .axis-h { fill: var(--hum); font-size: 11px; font-variant-numeric: tabular-nums; }
   .dot { stroke: var(--card); stroke-width: 2; }
   .dot.lv0 { fill: var(--ok); } .dot.lv1 { fill: var(--warn); } .dot.lv2 { fill: var(--bad); }
   .shock-line { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; }
@@ -175,7 +179,7 @@
   .lv0 { color: var(--ok); } .lv1 { color: var(--warn); } .lv2 { color: var(--bad); font-weight: 700; }
   footer { margin: 18px 0 8px; color: var(--dim); font-size: 13px; }
 
-  @media (max-width: 760px) { .hero, .grid2 { grid-template-columns: 1fr; } .axis-text { font-size: 20px; } }
+  @media (max-width: 760px) { .hero, .grid2 { grid-template-columns: 1fr; } .axis-text, .axis-h { font-size: 20px; } }
   @media (prefers-reduced-motion: reduce) { .banner.show, .pill.lv2 { animation: none; } .marker, .hist div { transition: none; } }
 </style>
 </head>
@@ -200,7 +204,7 @@
 
   <section class="card bar">
     <div class="row">
-      <label class="muted">ทีม <input id="team" size="10" autocomplete="off" placeholder="team04"></label>
+      <label class="muted">ทีม <input id="team" size="10" autocomplete="off" placeholder="team05"></label>
       <button id="go" class="main" type="button">เชื่อมต่อ</button>
     </div>
     <div class="row">
@@ -246,33 +250,36 @@
   <div class="kpis">
     <div class="kpi"><b id="out">--</b><span>หลุดช่วงรวม (นาที:วินาที)</span></div>
     <div class="kpi"><b id="exc">--</b><span>หลุดช่วงกี่ครั้ง</span></div>
-    <div class="kpi"><b id="rh">--</b><span>ความชื้น %</span></div>
+    <div class="kpi" id="rhTile"><b id="rh">--</b><span id="rhSub">ความชื้น %</span></div>
     <div class="kpi"><b id="vibN">0</b><span id="vibSub">สั่นสะเทือน (ครั้ง)</span></div>
   </div>
 
   <section class="card" style="margin-top:14px">
-    <h2>กราฟอุณหภูมิ ตามเวลา</h2>
+    <h2>กราฟอุณหภูมิและความชื้น ตามเวลา</h2>
     <div class="chartwrap" id="chartwrap">
-      <svg id="chart" viewBox="0 0 720 280" aria-label="กราฟอุณหภูมิตู้ยา ตามเวลา">
-        <rect id="okBand" class="ok-band" x="44" width="660"/>
-        <line id="okTop" class="ok-edge" x1="44" x2="704"/>
-        <line id="okBot" class="ok-edge" x1="44" x2="704"/>
+      <svg id="chart" viewBox="0 0 720 280" aria-label="กราฟอุณหภูมิและความชื้นตู้ยา ตามเวลา">
+        <rect id="okBand" class="ok-band" x="44" width="628"/>
+        <line id="okTop" class="ok-edge" x1="44" x2="672"/>
+        <line id="okBot" class="ok-edge" x1="44" x2="672"/>
         <g id="axes"></g>
         <g id="shocks"></g>
+        <polyline id="hline" class="trace-h"/>
         <polyline id="line" class="trace"/>
         <g id="dots"></g>
         <line id="cross" class="cross" y1="14" y2="250" style="display:none"/>
         <circle id="ring" class="ring" r="8" style="display:none"/>
-        <rect id="hit" x="44" y="14" width="660" height="236" fill="transparent"/>
+        <rect id="hit" x="44" y="14" width="628" height="236" fill="transparent"/>
       </svg>
       <div id="tip" class="tip"></div>
     </div>
     <div class="legend">
+      <span><i style="background:var(--accent);width:16px;height:3px;border-radius:2px;vertical-align:3px"></i>อุณหภูมิ (แกนซ้าย °C)</span>
+      <span><i style="background:var(--hum);width:16px;height:3px;border-radius:2px;vertical-align:3px"></i>ความชื้น (แกนขวา %)</span>
       <span><i style="background:var(--ok)"></i>ในช่วง</span>
       <span><i style="background:var(--warn)"></i>เตือนล่วงหน้า</span>
       <span><i style="background:var(--bad)"></i>แจ้งเตือน</span>
       <span><i class="d" style="background:var(--warn)"></i>สั่นสะเทือน</span>
-      <span>เส้นคือค่าทุก 5 วินาที จุดคือเหตุการณ์ (ระดับเปลี่ยน สั่น กักยา)</span>
+      <span>เส้นคือค่าทุก 5 วินาที จุดคือเหตุการณ์ (ระดับเปลี่ยน สั่น กักยา) สีของจุดดูจากอุณหภูมิ</span>
     </div>
   </section>
 
@@ -293,6 +300,12 @@
         </label>
         <label>ขอบบนใหม่ (t_hi)
           <span class="row"><input id="thi" type="number" min="21" max="45" value="30"> <span>°C</span> <button id="setHi" type="button">ส่ง</button></span>
+        </label>
+        <label>ความชื้นต่ำสุด (h_lo)
+          <span class="row"><input id="hlo" type="number" min="0" max="99" value="20"> <span>%</span> <button id="setHLo" type="button">ส่ง</button></span>
+        </label>
+        <label>ความชื้นสูงสุด (h_hi)
+          <span class="row"><input id="hhi" type="number" min="1" max="100" value="95"> <span>%</span> <button id="setHHi" type="button">ส่ง</button></span>
         </label>
       </div>
       <div class="row say">
@@ -318,6 +331,8 @@
   </section>
 
   <footer>
+    <p>ต่อยอดหน้านี้เองได้ (แก้ด้วยตัวเองหรือ vibe coding โดยวาง s2/app/MQTT_CONTRACT_th.md ให้ AI ก่อน)</p>
+    <p>หน้านี้เป็นจุดเริ่มต้นเท่านั้น ห้ามส่งตามนี้ ทีมต้องต่อยอดเองอย่างน้อย 3 อย่าง (ดู PROJECT_BRIEF_lite_th.md)</p>
   </footer>
 </div>
 
@@ -327,9 +342,10 @@
 const BROKER_URL = "wss://broker.hivemq.com:8884/mqtt";
 const ROOT = "bento-aiot";
 const Y_LO = 10, Y_HI = 40;                       // chart axis = same as the bar on the board
-const KNOWN = ["id", "n", "crop", "level", "alert", "temp_c", "rh", "sun_c", "out_s", "exc_n", "vib_n", "vib_g", "vib", "quarantine", "t_lo", "t_hi"];
+const KNOWN = ["id", "n", "crop", "level", "alert", "temp_c", "rh", "sun_c", "out_s", "exc_n", "vib_n", "vib_g", "vib", "quarantine", "t_lo", "t_hi", "h_lo", "h_hi"];
 const CROP_TH = { vaccine: "วัคซีนสัตว์", injection: "ยาฉีดสัตว์", tablet: "ยาเม็ดสัตว์" };
 const BANDS = { vaccine: [20, 30], injection: [20, 30], tablet: [18, 32] };   // same as CROPS on the board
+const HBANDS = { vaccine: [20, 95], injection: [20, 95], tablet: [20, 80] };  // humidity %, same as CROPS
 const STATE = ["ในช่วง", "เตือนล่วงหน้า", "แจ้งเตือน"];
 const REASON_TH = { hot: "ตู้อุ่น", cold: "เย็นจัด", dry: "แห้งไป", wet: "ตู้ชื้น", ok: "อยู่ในช่วง", vibration: "สั่นสะเทือน", quarantine: "กักยา" };
 const MAX_PTS = 720, MAX_SHOCKS = 30, MIN_SPAN = 10 * 60 * 1000, G_FULL = 1.0;   // 720 points = 1 hour of telemetry
@@ -338,7 +354,7 @@ const DEMO_WARN = 20, DEMO_ALERT = 40, DEMO_QUAR = 70, DEMO_CYCLE = 120;        
 const $ = (id) => document.getElementById(id);
 
 let client = null, team = new URLSearchParams(location.search).get("team") || "";
-let band = [20, 30], curCrop = "", prevLevel = null;
+let band = [20, 30], hband = [20, 95], curCrop = "", prevLevel = null;
 let quarantineSince = 0, clearedOnce = false;
 let vibCount = 0, lastShockG = null, liveG = null;
 let lastMsg = 0, boardN = null, lastCmd = 0;
@@ -412,10 +428,11 @@ $("sound").onclick = () => {
 
 /* ---------- chart ---------- */
 const SVGNS = "http://www.w3.org/2000/svg";
-const CH = { w: 720, h: 280, l: 44, r: 16, t: 14, b: 30 };
+const CH = { w: 720, h: 280, l: 44, r: 48, t: 14, b: 30 };
 const view = { t0: 0, t1: 1 };
 function el(name, attrs) { const e = document.createElementNS(SVGNS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
 function yOf(t) { const c = Math.max(Y_LO, Math.min(Y_HI, t)); return CH.h - CH.b - (c - Y_LO) / (Y_HI - Y_LO) * (CH.h - CH.t - CH.b); }
+function yOfH(h) { const c = Math.max(0, Math.min(100, h)); return CH.h - CH.b - c / 100 * (CH.h - CH.t - CH.b); }   // humidity 0-100 % on the right axis
 function xOf(ts) { return CH.l + (ts - view.t0) / (view.t1 - view.t0) * (CH.w - CH.l - CH.r); }
 
 function drawChart() {
@@ -433,12 +450,17 @@ function drawChart() {
     const tx = el("text", { class: "axis-text", x: CH.l - 8, y: yOf(t) + 4, "text-anchor": "end" });
     tx.textContent = String(t); axes.appendChild(tx);
   }
+  for (let h = 0; h <= 100; h += 20) {
+    const tx = el("text", { class: "axis-h", x: CH.w - CH.r + 8, y: yOfH(h) + 4, "text-anchor": "start" });
+    tx.textContent = String(h); axes.appendChild(tx);
+  }
   for (let i = 0; i < 5; i++) {
     const ts = view.t0 + (view.t1 - view.t0) * i / 4;
     const tx = el("text", { class: "axis-text", x: xOf(ts), y: CH.h - 8, "text-anchor": i === 0 ? "start" : i === 4 ? "end" : "middle" });
     tx.textContent = new Date(ts).toTimeString().slice(0, 5); axes.appendChild(tx);
   }
 
+  $("hline").setAttribute("points", pts.filter((p) => p.h !== null).map((p) => xOf(p.ts).toFixed(1) + "," + yOfH(p.h).toFixed(1)).join(" "));
   $("line").setAttribute("points", pts.map((p) => xOf(p.ts).toFixed(1) + "," + yOf(p.t).toFixed(1)).join(" "));
   const dots = $("dots"), sh = $("shocks"); dots.textContent = ""; sh.textContent = "";
   for (const p of pts) {
@@ -462,6 +484,7 @@ function showTip(p) {
   const t1 = document.createElement("b"); t1.textContent = p.t.toFixed(1) + " °C";
   const t2 = document.createElement("span"); t2.textContent = hhmm(new Date(p.ts)) + "  " + STATE[p.level];
   tip.replaceChildren(t1, t2);
+  if (p.h !== null) { const th = document.createElement("div"); th.style.color = "var(--hum)"; th.textContent = "ความชื้น " + p.h.toFixed(0) + " %"; tip.appendChild(th); }
   if (p.kind === "vibration") { const t3 = document.createElement("div"); t3.textContent = "สั่นสะเทือน " + (p.g === null ? "" : p.g.toFixed(2) + " g"); tip.appendChild(t3); }
   else if (p.note) { const t3 = document.createElement("div"); t3.textContent = p.note; tip.appendChild(t3); }
   tip.style.left = Math.max(12, Math.min(88, x / CH.w * 100)) + "%";
@@ -579,6 +602,7 @@ function applyCrop(c) {
   if (c !== curCrop) {                            // crop changed: take its default band once, keep manual limits otherwise
     curCrop = c;
     if (BANDS[c]) { band = BANDS[c].slice(); $("tlo").value = band[0]; $("thi").value = band[1]; }
+    if (HBANDS[c]) { hband = HBANDS[c].slice(); $("hlo").value = hband[0]; $("hhi").value = hband[1]; }
   }
 }
 
@@ -588,11 +612,25 @@ function syncLimits(d) {                          // telemetry carries the board
   band = [lo, hi];
   if (document.activeElement !== $("tlo")) $("tlo").value = lo;
   if (document.activeElement !== $("thi")) $("thi").value = hi;
+  const hl = num(d.h_lo), hh = num(d.h_hi);
+  if (hl !== null && hh !== null && hl < hh) {
+    hband = [hl, hh];
+    if (document.activeElement !== $("hlo")) $("hlo").value = hl;
+    if (document.activeElement !== $("hhi")) $("hhi").value = hh;
+  }
+  renderRh();
+}
+
+let lastRh = null;
+function renderRh() {                             // humidity tile: red when outside the humidity limits
+  $("rhSub").textContent = "ความชื้น % (ช่วง " + hband[0] + "-" + hband[1] + ")";
+  $("rhTile").className = "kpi" + (lastRh !== null && (lastRh < hband[0] || lastRh > hband[1]) ? " bad" : "");
 }
 
 function showReading(r) {                         // shared by events and telemetry
   if (r.t !== null) $("temp").textContent = r.t.toFixed(1);
-  if (r.rh !== null) $("rh").textContent = r.rh.toFixed(0);
+  if (r.rh !== null) { $("rh").textContent = r.rh.toFixed(0); lastRh = r.rh; }
+  renderRh();
   if (r.out !== null && r.out >= 0) $("out").textContent = mmss(Math.floor(r.out));
   if (r.exc !== null) $("exc").textContent = String(r.exc);
   if (r.vibN !== null) { vibCount = r.vibN; $("vibN").textContent = String(vibCount); }
@@ -612,7 +650,7 @@ function onTelemetry(d) {
   liveG = num(d.vib); renderVibSub();
   noteQuarantine(d, false, now);
   if (t !== null) {
-    pts.push({ ts, t, level, kind: "tel", g: null, note: "" });
+    pts.push({ ts, t, h: rh, level, kind: "tel", g: null, note: "" });
     if (pts.length > MAX_PTS) pts.shift();
     recent.push({ t, level, ok: t >= band[0] && t <= band[1] });
     if (recent.length > HIST_N) recent.shift();
@@ -644,7 +682,7 @@ function onEvent(d) {
 
   const note = isVib ? "สั่นสะเทือน" + (vibG === null ? "" : " " + vibG.toFixed(2) + " g") : (level ? reasonTh(code) : (isQuar ? "กักยา" : ""));
   if (t !== null && level !== null) {
-    pts.push({ ts, t, level, kind: isVib ? "vibration" : "reading", g: vibG, note: note });
+    pts.push({ ts, t, h: rh, level, kind: isVib ? "vibration" : "reading", g: vibG, note: note });
     if (pts.length > MAX_PTS) pts.shift();
     drawChart();
   }
@@ -714,7 +752,7 @@ function connect() {
 function resetState() {
   pts.length = 0; shocks.length = 0; rows.length = 0; recent.length = 0;
   prevLevel = null; quarantineSince = 0; clearedOnce = false; vibCount = 0; lastShockG = null; liveG = null;
-  lastMsg = 0; boardN = null;
+  lastMsg = 0; boardN = null; lastRh = null;
   $("rows").textContent = ""; $("other").textContent = ""; $("cmdMsg").textContent = "";
   $("temp").textContent = "--"; $("rh").textContent = "--"; $("out").textContent = "--"; $("exc").textContent = "--"; $("vibN").textContent = "0";
   $("state").textContent = "--"; $("state").className = "pill";
@@ -740,7 +778,7 @@ function demoTick() {
   const level = sim.streak >= DEMO_ALERT ? 2 : sim.streak >= DEMO_WARN ? 1 : 0;
   const shock = ph === 25 ? 0.18 : ph === 60 ? 0.42 : 0;
   const snap = { id: team || "team99", crop: curCrop || "vaccine", temp_c: +temp.toFixed(1), rh: +(58 + Math.random() * 2).toFixed(1),
-    sun_c: 0, out_s: sim.outTot, exc_n: sim.exc, vib_n: sim.vib, quarantine: sim.quar ? 1 : 0, t_lo: band[0], t_hi: band[1] };
+    sun_c: 0, out_s: sim.outTot, exc_n: sim.exc, vib_n: sim.vib, quarantine: sim.quar ? 1 : 0, t_lo: band[0], t_hi: band[1], h_lo: hband[0], h_hi: hband[1] };
   if (level !== sim.level) { sim.level = level; onEvent({ ...snap, level, alert: out ? "hot" : "ok" }); }
   if (!sim.quar && sim.outTot >= DEMO_QUAR) { sim.quar = true; snap.quarantine = 1; onEvent({ ...snap, level, alert: "quarantine" }); }
   if (shock) { sim.vib++; snap.vib_n = sim.vib; onEvent({ ...snap, level, alert: "vibration", vib_g: shock }); }
@@ -787,6 +825,16 @@ $("setHi").onclick = () => {
   const v = Number($("thi").value);
   if (!Number.isInteger(v) || v <= band[0] || v > 45) { $("cmdMsg").textContent = "ขอบบนต้องเป็นจำนวนเต็ม มากกว่า " + band[0] + " ไม่เกิน 45"; return; }
   if (send({ cmd: "set", t_hi: v }, "t_hi " + v)) { band[1] = v; drawChart(); drawGauge(null, prevLevel); }
+};
+$("setHHi").onclick = () => {
+  const v = Number($("hhi").value);
+  if (!Number.isInteger(v) || v <= hband[0] || v > 100) { $("cmdMsg").textContent = "ความชื้นสูงสุดต้องเป็นจำนวนเต็ม มากกว่า " + hband[0] + " ไม่เกิน 100"; return; }
+  if (send({ cmd: "set", h_hi: v }, "h_hi " + v)) { hband[1] = v; renderRh(); }
+};
+$("setHLo").onclick = () => {
+  const v = Number($("hlo").value);
+  if (!Number.isInteger(v) || v < 0 || v >= hband[1]) { $("cmdMsg").textContent = "ความชื้นต่ำสุดต้องเป็นจำนวนเต็ม 0 ถึง " + (hband[1] - 1); return; }
+  if (send({ cmd: "set", h_lo: v }, "h_lo " + v)) { hband[0] = v; renderRh(); }
 };
 $("setLo").onclick = () => {
   const v = Number($("tlo").value);
